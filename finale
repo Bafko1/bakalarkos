@@ -23,18 +23,18 @@ from tqdm import tqdm
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Reshape
 from keras.preprocessing.image import ImageDataGenerator
 
-emotion_mapping = {
-    'neu': 'neutral',
-    'fru': 'frustration',
-    'xxx': 'unknown',
-    'sur': 'surprise',
-    'ang': 'angry',
-    'hap': 'happy',
-    'sad': 'sad',
-    'exc': 'excited',
-    'oth': 'other',
-    'fea': 'fear',
-    'dis': 'disgust'
+binary_emotion_mapping = {
+    'angry': 1,
+    'fear': 1,
+    'disgust': 1,
+    'neutral': 0,
+    'happy': 0,
+    'sad': 0,
+    'surprise': 0,
+    'frustration': 1,
+    'excited': 0,
+    'unknown': 0,
+    'other': 0
 }
 
 
@@ -51,7 +51,7 @@ def load_iemocap_data(IEMOCAP_dir, csv_filename):
     iemocap_df['path'] = IEMOCAP_dir + "/" + iemocap_df['path']
     
     # Pridanie mapovania emócií
-    iemocap_df['emotion'] = iemocap_df['emotion'].map(emotion_mapping)
+    iemocap_df['Emotions'] = iemocap_df['Emotions'].map(binary_emotion_mapping)
     
     iemocap_df.rename(columns={'emotion': 'Emotions', 'path': 'Path'}, inplace=True)
     return iemocap_df[['Emotions', 'Path']]
@@ -80,7 +80,7 @@ def load_data():
     emotion_df = pd.DataFrame(file_emotion, columns=['Emotions'])
     path_df = pd.DataFrame(file_path, columns=['Path'])
     Ravdess_df = pd.concat([emotion_df, path_df], axis=1)
-    Ravdess_df.Emotions.replace({1:'neutral', 2:'calm', 3:'happy', 4:'sad', 5:'angry', 6:'fear', 7:'disgust', 8:'surprise'}, inplace=True)
+    Ravdess_df.Emotions.replace({'neutral': 0, 'calm': 0, 'happy': 0, 'sad': 0, 'angry': 1, 'fear': 1, 'disgust': 1, 'surprise': 0}, inplace=True)
     crema_directory_list = os.listdir(Crema)
     file_emotion = []
     file_path = []
@@ -103,7 +103,7 @@ def load_data():
             file_emotion.append('Unknown')
     emotion_df = pd.DataFrame(file_emotion, columns=['Emotions'])
     path_df = pd.DataFrame(file_path, columns=['Path'])
-    Crema_df = pd.concat([emotion_df, path_df], axis=1)
+    Crema_df.Emotions.replace({'sad': 0, 'angry': 1, 'disgust': 1, 'fear': 1, 'happy': 0, 'neutral': 0, 'Unknown': 0}, inplace=True)
     tess_directory_list = os.listdir(Tess)
     file_emotion = []
     file_path = []
@@ -115,7 +115,7 @@ def load_data():
             file_emotion.append(emotion)
     emotion_df = pd.DataFrame(file_emotion, columns=['Emotions'])
     path_df = pd.DataFrame(file_path, columns=['Path'])
-    Tess_df = pd.concat([emotion_df, path_df], axis=1)
+    Tess_df.Emotions.replace({'neutral': 0, 'angry': 1, 'disgust': 1, 'fear': 1, 'happy': 0, 'sad': 0, 'pleasantly surprised': 0, 'surprised': 0}, inplace=True)
     savee_directory_list = os.listdir(Savee)
     file_emotion = []
     file_path = []
@@ -143,7 +143,7 @@ def load_data():
                     file_emotion.append(emotion)
     emotion_df = pd.DataFrame(file_emotion, columns=['Emotions'])
     path_df = pd.DataFrame(file_path, columns=['Path'])
-    Savee_df = pd.concat([emotion_df, path_df], axis=1)
+    Savee_df.Emotions.replace({'neutral': 0, 'angry': 1, 'disgust': 1, 'fear': 1, 'happy': 0, 'sad': 0, 'surprise': 0}, inplace=True)
     data_path = pd.concat([Ravdess_df, Crema_df, Tess_df, Savee_df, IEMOCAP_df], axis = 0)
     data_path.to_csv("data_path.csv",index=False)
     return data_path
@@ -223,7 +223,7 @@ X_train = X_train[..., np.newaxis]
 X_test = X_test[..., np.newaxis]
 
 
-def build_improved_model(input_shape, num_classes):
+def build_binary_model(input_shape):
     model = Sequential()
     
     # Reshape 1D data to 2D with 1 channel
@@ -257,12 +257,9 @@ def build_improved_model(input_shape, num_classes):
     model.add(BatchNormalization())
     model.add(Dropout(0.5))  # Increased dropout
     
-    model.add(Dense(num_classes, activation='softmax'))
-    
-    # Compile the model with AdamW
-    optimizer = AdamW(learning_rate=0.0005, weight_decay=1e-4)  # Reduced learning rate
-    model.compile(loss='categorical_crossentropy', optimizer=optimizer, metrics=['accuracy', Recall(), Precision(), F1Score()])
-  
+    model.add(Dense(1, activation='sigmoid'))  # Changed to 1 unit and sigmoid for binary classification
+    optimizer = Adam(learning_rate=0.0005)
+    model.compile(loss='binary_crossentropy', optimizer=optimizer, metrics=['accuracy'])  # Changed loss to binary_crossentropy
     return model
 
 # Create the improved model
@@ -279,14 +276,17 @@ def train_model(model, X_train, Y_train, X_test, Y_test):
     history = model.fit(X_train, Y_train, batch_size=32, epochs=200, validation_data=(X_test, Y_test), callbacks=callbacks)
     return history
 
-history_improved = train_model(improved_model, X_train, Y_train, X_test, Y_test)
+binary_model = build_binary_model(input_shape)
+binary_model.summary()
+history_binary = train_model(binary_model, X_train, Y_train, X_test, Y_test)
+
 
 def evaluate_model(model, X_test, Y_test):
     Y_pred = model.predict(X_test)
-    Y_pred_classes = np.argmax(Y_pred, axis=1)
-    Y_true = np.argmax(Y_test, axis=1)
+    Y_pred_classes = (Y_pred > 0.5).astype(int)  # Changed to binary thresholding
+    Y_true = Y_test  # No need to argmax since Y_test is already binary
     cm = confusion_matrix(Y_true, Y_pred_classes)
     print(cm)
     print(classification_report(Y_true, Y_pred_classes))
 
-evaluate_model(improved_model, X_test, Y_test)
+evaluate_model(binary_model, X_test, Y_test)  # Changed to binary_model
