@@ -18,6 +18,25 @@ from tensorflow.keras.optimizers import AdamW
 from keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
 from keras.models import Sequential
 from keras.layers import Dense, Conv1D, MaxPooling1D, Flatten, Dropout, BatchNormalization
+from tqdm.keras import TqdmCallback
+from tqdm import tqdm
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Reshape
+from keras.preprocessing.image import ImageDataGenerator
+
+emotion_mapping = {
+    'neu': 'neutral',
+    'fru': 'frustration',
+    'xxx': 'unknown',
+    'sur': 'surprise',
+    'ang': 'angry',
+    'hap': 'happy',
+    'sad': 'sad',
+    'exc': 'excited',
+    'oth': 'other',
+    'fea': 'fear',
+    'dis': 'disgust'
+}
+
 
 if not sys.warnoptions:
     warnings.simplefilter("ignore")
@@ -25,10 +44,19 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 def load_iemocap_data(IEMOCAP_dir, csv_filename):
     iemocap_df = pd.read_csv(csv_filename)
-    iemocap_df = iemocap_df[iemocap_df['emotion'] != 'xxx']
+    
+    # Vyradenie emócií 'xxx' a 'oth'
+    iemocap_df = iemocap_df[~iemocap_df['emotion'].isin(['xxx', 'oth'])]
+    
     iemocap_df['path'] = IEMOCAP_dir + "/" + iemocap_df['path']
+    
+    # Pridanie mapovania emócií
+    iemocap_df['emotion'] = iemocap_df['emotion'].map(emotion_mapping)
+    
     iemocap_df.rename(columns={'emotion': 'Emotions', 'path': 'Path'}, inplace=True)
     return iemocap_df[['Emotions', 'Path']]
+
+
 
 IEMOCAP_dir = "IEMOCAP_full_release"
 csv_filename = "iemocap_full_dataset.csv"  
@@ -166,7 +194,7 @@ def extract_features(data, sample_rate):
 
 def extract_features_from_audio(data_path):
     X, Y = [], []
-    for index, row in data_path.iterrows():
+    for index, row in tqdm(data_path.iterrows(), total=data_path.shape[0], desc="Extracting Features"):
         file_path = row['Path']
         emotion = row['Emotions']
         data, sample_rate = librosa.load(file_path, res_type='kaiser_fast',duration=2.5,sr=22050*2,offset=0.5)
@@ -191,30 +219,67 @@ def prepare_data(X, Y):
 
 X_train, X_test, Y_train, Y_test = prepare_data(X, Y)
 
-def build_model(input_shape, num_classes):
+X_train = X_train[..., np.newaxis]
+X_test = X_test[..., np.newaxis]
+
+
+def build_improved_model(input_shape, num_classes):
     model = Sequential()
-    model.add(Dense(256, activation='relu', input_shape=(input_shape,)))
-    model.add(Dropout(0.5))
-    model.add(Dense(128, activation='relu'))
-    model.add(Dropout(0.5))
-    model.add(Dense(64, activation='relu'))
-    model.add(Dropout(0.5))
+    
+    # Reshape 1D data to 2D with 1 channel
+    model.add(Reshape((input_shape, 1, 1), input_shape=(input_shape, 1)))
+    
+    # First convolutional layer
+    model.add(Conv2D(128, (3, 1), activation='relu'))
+    model.add(BatchNormalization())
+    model.add(MaxPooling2D((2, 1)))
+    model.add(Dropout(0.5))  # Increased dropout
+    
+    # Second convolutional layer
+    model.add(Conv2D(256, (3, 1), activation='relu'))
+    model.add(BatchNormalization())
+    model.add(MaxPooling2D((2, 1)))
+    model.add(Dropout(0.5))  # Increased dropout
+    
+    # Third convolutional layer
+    model.add(Conv2D(512, (3, 1), activation='relu'))  # New Conv layer
+    model.add(BatchNormalization())
+    model.add(MaxPooling2D((2, 1)))
+    model.add(Dropout(0.5))  # Increased dropout
+    
+    # Fully connected layers
+    model.add(Flatten())
+    model.add(Dense(512, activation='relu', kernel_regularizer=l2(0.01)))
+    model.add(BatchNormalization())
+    model.add(Dropout(0.5))  # Increased dropout
+    
+    model.add(Dense(256, activation='relu', kernel_regularizer=l2(0.01)))
+    model.add(BatchNormalization())
+    model.add(Dropout(0.5))  # Increased dropout
+    
     model.add(Dense(num_classes, activation='softmax'))
-    model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+    
+    # Compile the model with AdamW
+    optimizer = AdamW(learning_rate=0.0005, weight_decay=1e-4)  # Reduced learning rate
+    model.compile(loss='categorical_crossentropy', optimizer=optimizer, metrics=['accuracy', Recall(), Precision(), F1Score()])
+  
     return model
 
-model = build_model(X_train.shape[1], Y_train.shape[1])
-model.summary()
+# Create the improved model
+input_shape = X_train.shape[1]
+num_classes = Y_train.shape[1]
+improved_model = build_improved_model(input_shape, num_classes)
+improved_model.summary()
 
 def train_model(model, X_train, Y_train, X_test, Y_test):
     early_stopping = EarlyStopping(monitor='val_loss', patience=10, verbose=1, mode='min', restore_best_weights=True)
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, verbose=1, mode='min')
     checkpoint = ModelCheckpoint('best_model.h5', monitor='val_accuracy', mode='max', verbose=1, save_best_only=True)
     callbacks = [early_stopping, reduce_lr, checkpoint]
-    history = model.fit(X_train, Y_train, batch_size=32, epochs=100, validation_data=(X_test, Y_test), callbacks=callbacks)
+    history = model.fit(X_train, Y_train, batch_size=32, epochs=200, validation_data=(X_test, Y_test), callbacks=callbacks)
     return history
 
-history = train_model(model, X_train, Y_train, X_test, Y_test)
+history_improved = train_model(improved_model, X_train, Y_train, X_test, Y_test)
 
 def evaluate_model(model, X_test, Y_test):
     Y_pred = model.predict(X_test)
@@ -224,4 +289,4 @@ def evaluate_model(model, X_test, Y_test):
     print(cm)
     print(classification_report(Y_true, Y_pred_classes))
 
-evaluate_model(model, X_test, Y_test)
+evaluate_model(improved_model, X_test, Y_test)
