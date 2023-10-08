@@ -144,16 +144,32 @@ def print_metrics(true_labels, pred_labels):
     print("Recall: {:.4f}".format(recall))
     print("F1-score: {:.4f}".format(f1))
 
-# Create the dev, test and train datasets using the custom dataset class
-dev_dataset = AudioDataset([dev_path], dev_text_path)
-test_dataset = AudioDataset([test_path], test_text_path)
-train_dataset = AudioDataset([train_100_path, train_360_path], train_text_path)
 
 
-# Create the dev, test and train dataloaders using the datasets
-dev_dataloader = DataLoader(dev_dataset, batch_size=32, shuffle=False, num_workers=0)
-test_dataloader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=0)
-train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+# Define a custom collate function
+def collate_fn(batch):
+    """Collate a batch of audio samples."""
+    # Get the waveforms and labels from the batch
+    waveforms = [sample["waveform"] for sample in batch]
+    labels = [sample["label"] for sample in batch]
+    # Get the maximum length of the waveforms
+    max_len = max(waveform.shape[1] for waveform in waveforms)
+    # Create an empty tensor of shape (batch_size, 1, max_len)
+    padded_waveforms = torch.zeros(len(waveforms), 1, max_len)
+    # Loop through the waveforms and pad or crop them to match the max_len
+    for i, waveform in enumerate(waveforms):
+        if waveform.shape[1] > max_len:
+            # Crop the waveform
+            padded_waveforms[i, :, :max_len] = waveform[:, :max_len]
+        else:
+            # Pad the waveform with zeros
+            padded_waveforms[i, :, :waveform.shape[1]] = waveform
+    # Stack the labels into a tensor
+    labels = torch.stack(labels)
+    # Return the padded waveforms and labels as a batch
+    return padded_waveforms, labels
+
+
 
 # Define the model class for fake audio detection using temporal convolution
 class TemporalConvNet(torch.nn.Module):
@@ -179,7 +195,9 @@ class TemporalConvNet(torch.nn.Module):
         # Define the dropout layer
         self.dropout = torch.nn.Dropout(p=0.5)
         # Define the linear layer
-        self.linear = torch.nn.Linear(in_features=256*16, out_features=2)
+        self.linear = torch.nn.Linear(in_features=3065856, out_features=2)
+
+
         # Define the softmax layer
         self.softmax = torch.nn.Softmax(dim=-1)
 
@@ -215,6 +233,8 @@ class TemporalConvNet(torch.nn.Module):
         # Apply the dropout layer
         x = self.dropout(x)
         # Apply the linear layer
+        print(x.shape)
+        x = x.view(x.size(0), -1)  # Flatten the tensor
         x = self.linear(x)
         # Apply the softmax layer
         x = self.softmax(x)
@@ -222,6 +242,16 @@ class TemporalConvNet(torch.nn.Module):
 
 
 if __name__ == '__main__':
+    # Create the dev, test and train datasets using the custom dataset class
+    dev_dataset = AudioDataset([dev_path], dev_text_path)
+    test_dataset = AudioDataset([test_path], test_text_path)
+    train_dataset = AudioDataset([train_100_path, train_360_path], train_text_path)
+
+    # Create the dev, test and train dataloaders using the datasets
+    dev_dataloader = DataLoader(dev_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    # Create the train dataloader with the collate function
+    train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4, collate_fn=collate_fn)
     # Create an instance of the model
     model = TemporalConvNet().to(device)
 
@@ -235,7 +265,7 @@ if __name__ == '__main__':
         train_loss = 0.0
         for batch in train_dataloader:
             # Get the inputs and labels from the batch
-            inputs, labels = batch["waveform"].to(device), batch["label"].to(device)
+            inputs, labels = batch[0].to(device), batch[1].to(device)
             # Zero the parameter gradients
             optimizer.zero_grad()
             # Forward pass
