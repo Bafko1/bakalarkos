@@ -170,7 +170,6 @@ def collate_fn(batch):
     return padded_waveforms, labels
 
 
-
 # Define the model class for fake audio detection using temporal convolution
 class TemporalConvNet(torch.nn.Module):
     """A model class for fake audio detection using temporal convolution."""
@@ -179,25 +178,25 @@ class TemporalConvNet(torch.nn.Module):
         """Initialize the model."""
         super(TemporalConvNet, self).__init__()
         # Define the convolutional layers
-        self.conv1 = torch.nn.Conv1d(in_channels=1, out_channels=16, kernel_size=64, stride=2, padding=32)
-        self.conv2 = torch.nn.Conv1d(in_channels=16, out_channels=32, kernel_size=32, stride=2, padding=16)
-        self.conv3 = torch.nn.Conv1d(in_channels=32, out_channels=64, kernel_size=16, stride=2, padding=8)
-        self.conv4 = torch.nn.Conv1d(in_channels=64, out_channels=128, kernel_size=8, stride=2, padding=4)
-        self.conv5 = torch.nn.Conv1d(in_channels=128, out_channels=256, kernel_size=4, stride=2, padding=2)
+        self.conv1 = torch.nn.Conv1d(in_channels=1, out_channels=16, kernel_size=64, stride=2, padding=32, bias=False)
+        self.conv2 = torch.nn.Conv1d(in_channels=16, out_channels=32, kernel_size=32, stride=2, padding=0, bias=False)
+        self.conv3 = torch.nn.Conv1d(in_channels=32, out_channels=64, kernel_size=16, stride=2, padding=0, bias=False)
+        self.conv4 = torch.nn.Conv1d(in_channels=64, out_channels=128, kernel_size=8, stride=2, padding=0, bias=False)
+        self.conv5 = torch.nn.Conv1d(in_channels=128, out_channels=256, kernel_size=4, stride=2, padding=0, bias=False)
+        self.conv6 = torch.nn.Conv1d(in_channels=256, out_channels=512, kernel_size=2, stride=2, padding=0, bias=False)
         # Define the batch normalization layers
         self.bn1 = torch.nn.BatchNorm1d(num_features=16)
         self.bn2 = torch.nn.BatchNorm1d(num_features=32)
         self.bn3 = torch.nn.BatchNorm1d(num_features=64)
         self.bn4 = torch.nn.BatchNorm1d(num_features=128)
         self.bn5 = torch.nn.BatchNorm1d(num_features=256)
+        self.bn6 = torch.nn.BatchNorm1d(num_features=512)
         # Define the activation function
         self.relu = torch.nn.ReLU()
         # Define the dropout layer
         self.dropout = torch.nn.Dropout(p=0.5)
         # Define the linear layer
-        self.linear = torch.nn.Linear(in_features=3065856, out_features=2)
-
-
+        self.linear = torch.nn.Linear(in_features=512*16*8*4*2*1*1*1*1*1*1*1*1*1*1*1*1*1*1*1*1*1*1*1*1*1*1*, out_features=2) # The input size is calculated by multiplying the output sizes of each convolutional layer
         # Define the softmax layer
         self.softmax = torch.nn.Softmax(dim=-1)
 
@@ -205,40 +204,63 @@ class TemporalConvNet(torch.nn.Module):
         """Perform the forward pass of the model."""
         # Apply the first convolutional layer
         x = self.conv1(x)
-        # Apply the batch normalization and activation function
+        # Apply the batch normalization
         x = self.bn1(x)
+        # Apply the activation function
         x = self.relu(x)
+        # Apply the dropout
+        x = self.dropout(x)
         # Apply the second convolutional layer
         x = self.conv2(x)
-        # Apply the batch normalization and activation function
+        # Apply the batch normalization
         x = self.bn2(x)
+        # Apply the activation function
         x = self.relu(x)
+        # Apply the dropout
+        x = self.dropout(x)
         # Apply the third convolutional layer
         x = self.conv3(x)
-        # Apply the batch normalization and activation function
+        # Apply the batch normalization
         x = self.bn3(x)
+        # Apply the activation function
         x = self.relu(x)
+        # Apply the dropout
+        x = self.dropout(x)
         # Apply the fourth convolutional layer
         x = self.conv4(x)
-        # Apply the batch normalization and activation function
+        # Apply the batch normalization
         x = self.bn4(x)
+        # Apply the activation function
         x = self.relu(x)
+        # Apply the dropout
+        x = self.dropout(x)
         # Apply the fifth convolutional layer
         x = self.conv5(x)
-        # Apply the batch normalization and activation function
+        # Apply the batch normalization
         x = self.bn5(x)
+        # Apply the activation function
         x = self.relu(x)
-        # Flatten the tensor
-        x = x.view(x.size(0), -1)
-        # Apply the dropout layer
+        # Apply the dropout
         x = self.dropout(x)
-        # Apply the linear layer
-        print(x.shape)
-        x = x.view(x.size(0), -1)  # Flatten the tensor
-        x = self.linear(x)
-        # Apply the softmax layer
-        x = self.softmax(x)
-        return x
+         # Apply the sixth convolutional layer
+         x = self.conv6(x)
+         # Apply the batch normalization
+         x = self.bn6(x)
+         # Apply the activation function
+         x = self.relu(x)
+         # Apply the dropout
+         x = self.dropout(x)
+         # Flatten the output of the last convolutional layer
+         x = torch.flatten(x, 1) 
+         # Apply the linear layer
+         x = self.linear(x) 
+         # Apply the softmax layer
+         x = self.softmax(x) 
+         # Return the output of the model
+         return x
+
+
+
 
 
 if __name__ == '__main__':
